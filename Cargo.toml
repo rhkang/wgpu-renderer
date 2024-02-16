@@ -12,3 +12,4 @@ env_logger = "0.10.1"
 log = "0.4.20"
 pollster = "0.3.0"
 bytemuck = { version = "1.14.3", features = ["derive"] }
+image = {version = "0.24.8", features = ["png", "jpeg"], default-features = false}

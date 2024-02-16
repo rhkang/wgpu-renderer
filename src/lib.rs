@@ -1,4 +1,5 @@
 pub mod engine;
-pub mod vertex;
+pub mod object;
 pub mod pipeline;
+pub mod renderer;
 pub mod scene;

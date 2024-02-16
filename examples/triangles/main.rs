@@ -1,27 +1,65 @@
-use wgpu_renderer::engine;
+use wgpu::util::DeviceExt;
+use wgpu_renderer::engine::*;
+use wgpu_renderer::object::*;
 use wgpu_renderer::pipeline::PipelineObject;
+use wgpu_renderer::renderer::RenderState;
 use wgpu_renderer::scene::*;
+use winit::event::WindowEvent;
 
-// const VERTICES: &[Vertex] = &[
-//     Vertex {
-//         position: [0.0, 0.5, 0.0],
-//         color: [1.0, 0.0, 0.0],
-//     },
-//     Vertex {
-//         position: [-0.5, -0.5, 0.0],
-//         color: [0.0, 1.0, 0.0],
-//     },
-//     Vertex {
-//         position: [0.5, -0.5, 0.0],
-//         color: [0.0, 0.0, 1.0],
-//     },
-// ];
+const VERTICES: &[Vertex] = &[
+    Vertex {
+        position: [-0.0868241, 0.49240386, 0.0],
+        color: [0.1, 0.2, 0.4],
+    }, // A
+    Vertex {
+        position: [-0.49513406, 0.06958647, 0.0],
+        color: [0.2, 0.3, 0.4],
+    }, // B
+    Vertex {
+        position: [-0.21918549, -0.44939706, 0.0],
+        color: [0.6, 0.0, 0.4],
+    }, // C
+    Vertex {
+        position: [0.35966998, -0.3473291, 0.0],
+        color: [0.7, 0.8, 0.4],
+    }, // D
+    Vertex {
+        position: [0.44147372, 0.2347359, 0.0],
+        color: [0.5, 0.9, 0.4],
+    }, // E
+];
 
-// device, 
-pub fn init(scene: &mut Scene, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
+const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+
+pub fn input(
+    state: &mut RenderState,
+    size: &mut winit::dpi::PhysicalSize<u32>,
+    event: &WindowEvent,
+) -> bool {
+    const FACTOR: f64 = 0.3;
+    match event {
+        WindowEvent::CursorMoved { position, .. } => {
+            state.clear_color = wgpu::Color {
+                r: position.x as f64 / size.width as f64 + FACTOR,
+                g: position.y as f64 / size.height as f64 + FACTOR,
+                b: 1.0,
+                a: 1.0,
+            };
+
+            true
+        }
+        _ => false,
+    }
+}
+
+pub fn init(engine: &mut Engine) {
+    let scene = &mut engine.scene;
+    let device = &engine.device;
+    let config = &engine.config;
+
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shader.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/triangles.wgsl").into()),
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -36,7 +74,7 @@ pub fn init(scene: &mut Scene, device: &wgpu::Device, config: &wgpu::SurfaceConf
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: "vs_main",
-            buffers: &[],
+            buffers: &[Vertex::desc()],
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -71,7 +109,7 @@ pub fn init(scene: &mut Scene, device: &wgpu::Device, config: &wgpu::SurfaceConf
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: "vs_main",
-            buffers: &[],
+            buffers: &[Vertex::desc()],
         },
         fragment: Some(wgpu::FragmentState {
             module: &shader,
@@ -100,20 +138,47 @@ pub fn init(scene: &mut Scene, device: &wgpu::Device, config: &wgpu::SurfaceConf
         multiview: None,
     });
 
-    let mut pipelines = vec![PipelineObject{ pipeline, polygon_mode: wgpu::PolygonMode::Fill }, PipelineObject{ pipeline: pipeline_line, polygon_mode: wgpu::PolygonMode::Line }];
+    let mut pipelines = vec![
+        PipelineObject {
+            pipeline,
+            polygon_mode: wgpu::PolygonMode::Fill,
+        },
+        PipelineObject {
+            pipeline: pipeline_line,
+            polygon_mode: wgpu::PolygonMode::Line,
+        },
+    ];
     scene.update_pipelines(&mut pipelines);
+
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(VERTICES),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(INDICES),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    engine.renderer.vertex_buffer = Some(vertex_buffer);
+    engine.renderer.index_buffer = Some(index_buffer);
 }
 
-pub fn render(device: &wgpu::Device, surface: &wgpu::Surface, queue: &wgpu::Queue, engine: &engine::Engine) -> Result<(), wgpu::SurfaceError> {
+pub fn render(engine: &Engine) -> Result<(), wgpu::SurfaceError> {
+    let surface = &engine.surface;
+    let device = &engine.device;
+    let queue = &engine.queue;
+
     let output = surface.get_current_texture()?;
     let view = output
         .texture
         .create_view(&wgpu::TextureViewDescriptor::default());
 
-    let mut encoder = device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Render Encoder"),
+    });
 
     {
         let mut _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -122,7 +187,7 @@ pub fn render(device: &wgpu::Device, surface: &wgpu::Surface, queue: &wgpu::Queu
                 view: &view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(engine.render_state.clear_color),
+                    load: wgpu::LoadOp::Clear(engine.renderer.state.clear_color),
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -131,12 +196,24 @@ pub fn render(device: &wgpu::Device, surface: &wgpu::Surface, queue: &wgpu::Queu
             occlusion_query_set: None,
         });
 
-        if engine.render_state.polygon_fill {
-            _render_pass.set_pipeline(&engine.pipeline_manager.first_polygon_fill_item());
+        if engine.renderer.state.polygon_fill {
+            _render_pass.set_pipeline(&engine.renderer.pipeline_manager.first_polygon_fill_item());
         } else {
-            _render_pass.set_pipeline(&engine.pipeline_manager.first_polygon_line_item());
+            _render_pass.set_pipeline(&engine.renderer.pipeline_manager.first_polygon_line_item());
         }
-        _render_pass.draw(0..3, 0..1);
+
+        match &engine.renderer.vertex_buffer {
+            Some(v) => _render_pass.set_vertex_buffer(0, v.slice(..)),
+            None => {}
+        }
+
+        match &engine.renderer.index_buffer {
+            Some(i) => _render_pass.set_index_buffer(i.slice(..), wgpu::IndexFormat::Uint16),
+            None => {}
+        }
+
+        // _render_pass.draw(0..VERTICES.len() as u32, 0..1);   // If vertex only
+        _render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
     }
 
     queue.submit(std::iter::once(encoder.finish()));
@@ -146,12 +223,13 @@ pub fn render(device: &wgpu::Device, surface: &wgpu::Surface, queue: &wgpu::Queu
 }
 
 fn main() {
-    let scene = Scene{
+    let scene = Scene {
         objects: vec![],
         pipeline_objects: vec![],
+        input_command: Box::new(input),
         init_command: Box::new(init),
         render_command: Box::new(render),
     };
 
-    pollster::block_on(engine::run(Some(scene)));
+    pollster::block_on(run(Some(scene)));
 }

@@ -7,11 +7,15 @@ pub struct PipelineManager {
     pub pipelines: Vec<PipelineObject>,
 }
 
-impl PipelineManager {
-    pub fn add_raw(&mut self, pipeline: wgpu::RenderPipeline, polygon_mode: wgpu::PolygonMode) {
-        self.pipelines.push(PipelineObject{ pipeline, polygon_mode });
+impl Default for PipelineManager {
+    fn default() -> Self {
+        Self {
+            pipelines: Default::default(),
+        }
     }
+}
 
+impl PipelineManager {
     pub fn add(&mut self, pipeline: PipelineObject) {
         self.pipelines.push(pipeline);
     }

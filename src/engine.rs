@@ -1,41 +1,38 @@
 use std::sync::Arc;
-use winit::event_loop::EventLoop;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
-use winit::window::{Window, WindowBuilder};
+use winit::event_loop::EventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{Window, WindowBuilder};
 
-use crate::pipeline::*;
+use crate::renderer::*;
 use crate::scene::*;
 
-pub struct RenderState{
-    pub clear_color: wgpu::Color,
-    pub polygon_fill: bool,
-}
-
-impl Default for RenderState{
+impl Default for RenderState {
     fn default() -> Self {
-        Self { polygon_fill: true, clear_color: wgpu::Color::BLACK }
+        Self {
+            polygon_fill: true,
+            clear_color: wgpu::Color::BLACK,
+        }
     }
 }
 
-pub struct Engine{
+pub struct Engine {
     // wgpu graphics components
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+
     // window, surface
     window: Arc<Window>,
-    config: wgpu::SurfaceConfiguration,
-    surface: wgpu::Surface<'static>,
-    size: winit::dpi::PhysicalSize<u32>,
-    
+    pub config: wgpu::SurfaceConfiguration,
+    pub surface: wgpu::Surface<'static>,
+    pub size: winit::dpi::PhysicalSize<u32>,
+
     // managing objects
-    pub pipeline_manager: PipelineManager,
-    pub render_state: RenderState,
-    scene: Scene,
+    pub renderer: Renderer,
+    pub scene: Scene,
 }
 
-impl Engine{
+impl Engine {
     fn window(&self) -> &Window {
         &self.window
     }
@@ -50,24 +47,8 @@ impl Engine{
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        match event {
-            WindowEvent::CursorMoved { position, .. } => {
-                self.render_state.clear_color = wgpu::Color {
-                    r: position.x as f64 / self.size.width as f64,
-                    g: position.y as f64 / self.size.height as f64,
-                    b: 1.0,
-                    a: 1.0,
-                };
-
-                true
-            }
-            _ => false,
-        }
+        (&self.scene.input_command)(&mut self.renderer.state, &mut self.size, event)
     }
-
-    // pub fn graphics_wgpu_objects(&self) -> (&wgpu::Device, &wgpu::Surface, &wgpu::Queue) {
-    //     (&self.device, &self.surface, &self.queue)
-    // }
 
     pub async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
@@ -121,27 +102,23 @@ impl Engine{
         };
         surface.configure(&device, &config);
 
-        let pipeline_manager = PipelineManager { pipelines: vec![] };
-
         Self {
             surface,
             device,
             window,
             config,
             queue,
-            pipeline_manager,
             size,
-            render_state: Default::default(),
+            renderer: Default::default(),
             scene: Default::default(),
         }
     }
-    
+
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        (&self.scene.render_command)(&self.device, &self.surface, &self.queue, &self)
+        (self.scene.render_command)(self)
     }
 
-    pub fn update(&self) {
-    }    
+    pub fn update(&self) {}
 }
 
 pub async fn run(scene: Option<Scene>) {
@@ -153,15 +130,25 @@ pub async fn run(scene: Option<Scene>) {
     match &scene {
         Some(s) => {
             let f = &s.init_command;
-            (f)(&mut engine.scene, &engine.device, &engine.config);
+            (f)(&mut engine);
 
-            engine.scene.render_command = scene.unwrap().render_command;
-        },
-        None => {},
+            let scene_data = scene.unwrap();
+            engine.scene.render_command = scene_data.render_command;
+            engine.scene.input_command = scene_data.input_command;
+        }
+        None => {
+            eprintln!("No Entry Scene provided");
+            return;
+        }
     };
 
-    engine.pipeline_manager.add(engine.scene.pipeline_objects.pop().unwrap());
-    engine.pipeline_manager.add(engine.scene.pipeline_objects.pop().unwrap());
+    // move pipelines provided by scene into renderer
+    loop {
+        match engine.scene.pipeline_objects.pop() {
+            Some(item) => engine.renderer.pipeline_manager.add(item),
+            None => break,
+        }
+    }
 
     let _ = event_loop.run(move |event, control_flow| match event {
         Event::WindowEvent {
@@ -191,7 +178,7 @@ pub async fn run(scene: Option<Scene>) {
                             },
                         ..
                     } => {
-                        engine.render_state.polygon_fill = !engine.render_state.polygon_fill;
+                        engine.renderer.state.polygon_fill = !engine.renderer.state.polygon_fill;
                     }
                     WindowEvent::Resized(new_size) => engine.resize(*new_size),
                     WindowEvent::RedrawRequested => {
