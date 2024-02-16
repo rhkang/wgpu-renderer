@@ -3,19 +3,37 @@ use wgpu_renderer::engine::*;
 use wgpu_renderer::pipeline::PipelineObject;
 use wgpu_renderer::renderer::RenderState;
 use wgpu_renderer::scene::*;
+use wgpu_renderer::texture;
+use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 
 use bytemuck::{Pod, Zeroable};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct Vertex {
-    pub position: [f32; 3],
-    pub color: [f32; 3],
+struct Uniform {
+    width: f32,
+    height: f32,
+}
+
+impl Uniform {
+    fn new(size: &PhysicalSize<u32>) -> Self {
+        Self {
+            width: size.width as f32,
+            height: size.height as f32,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    tex_coords: [f32; 2],
 }
 
 impl Vertex {
     const ATTRIBS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2];
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -28,63 +46,116 @@ impl Vertex {
 
 const VERTICES: &[Vertex] = &[
     Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
-        color: [0.1, 0.2, 0.4],
+        position: [-0.5, -0.5, 0.0],
+        tex_coords: [0.0, 1.0],
     }, // A
     Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
-        color: [0.2, 0.3, 0.4],
+        position: [-0.5, 0.5, 0.0],
+        tex_coords: [0.0, 0.0],
     }, // B
     Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
-        color: [0.6, 0.0, 0.4],
+        position: [0.5, -0.5, 0.0],
+        tex_coords: [1.0, 1.0],
     }, // C
     Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
-        color: [0.7, 0.8, 0.4],
+        position: [0.5, 0.5, 0.0],
+        tex_coords: [1.0, 0.0],
     }, // D
-    Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
-        color: [0.5, 0.9, 0.4],
-    }, // E
 ];
 
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+const INDICES: &[u16] = &[0, 2, 3, 0, 3, 1];
 
-pub fn input(
-    state: &mut RenderState,
-    size: &mut winit::dpi::PhysicalSize<u32>,
-    event: &WindowEvent,
-) -> bool {
-    const FACTOR: f64 = 0.3;
-    match event {
-        WindowEvent::CursorMoved { position, .. } => {
-            state.clear_color = wgpu::Color {
-                r: position.x as f64 / size.width as f64 + FACTOR,
-                g: position.y as f64 / size.height as f64 + FACTOR,
-                b: 1.0,
-                a: 1.0,
-            };
-
-            true
-        }
-        _ => false,
-    }
+pub fn input(_: &mut RenderState, _: &mut winit::dpi::PhysicalSize<u32>, _: &WindowEvent) -> bool {
+    false
 }
 
 pub fn init(engine: &mut Engine) {
     let scene = &mut engine.scene;
     let device = &engine.device;
     let config = &engine.config;
+    let queue = &engine.queue;
+
+    let diffuse_bytes = include_bytes!("../../resources/texture_1.jpg");
+    let texture = texture::Texture::from_bytes(device, queue, diffuse_bytes, None).unwrap();
+
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&texture.view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&texture.sampler),
+            },
+        ],
+    });
+
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&[Uniform::new(&engine.size)]),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    let uniform_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+    let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &uniform_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(uniform.as_entire_buffer_binding()),
+        }],
+    });
+
+    engine.renderer.bind_group = Some(bind_group);
+    engine.renderer.uniform_bind_group = Some(uniform_bind_group);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("triangles.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("texture.wgsl").into()),
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Pipeline Layout"),
-        bind_group_layouts: &[],
+        bind_group_layouts: &[&bind_group_layout, &uniform_bind_group_layout],
         push_constant_ranges: &[],
     });
 
@@ -232,7 +303,16 @@ pub fn render(engine: &Engine) -> Result<(), wgpu::SurfaceError> {
             None => {}
         }
 
-        // _render_pass.draw(0..VERTICES.len() as u32, 0..1);   // If vertex only
+        match &engine.renderer.bind_group {
+            Some(bg) => _render_pass.set_bind_group(0, bg, &[]),
+            None => {}
+        }
+
+        match &engine.renderer.uniform_bind_group {
+            Some(bg) => _render_pass.set_bind_group(1, bg, &[]),
+            None => {}
+        }
+
         _render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
     }
 

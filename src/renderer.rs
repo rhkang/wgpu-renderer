@@ -1,4 +1,5 @@
 use crate::pipeline::*;
+use crate::texture::*;
 
 pub struct RenderState {
     pub clear_color: wgpu::Color,
@@ -10,6 +11,9 @@ pub struct Renderer {
     pub state: RenderState,
     pub vertex_buffer: Option<wgpu::Buffer>,
     pub index_buffer: Option<wgpu::Buffer>,
+    pub texture: Option<Texture>,
+    pub bind_group: Option<wgpu::BindGroup>,
+    pub uniform_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl Default for Renderer {
@@ -19,6 +23,9 @@ impl Default for Renderer {
             state: Default::default(),
             vertex_buffer: None,
             index_buffer: None,
+            texture: None,
+            bind_group: None,
+            uniform_bind_group: None,
         }
     }
 }
