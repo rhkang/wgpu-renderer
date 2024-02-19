@@ -1,4 +1,7 @@
 .vscode
 .item
+.idea
 
 target
+
+*.patch

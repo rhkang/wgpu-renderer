@@ -1,7 +1,6 @@
 use wgpu::util::DeviceExt;
 use wgpu_renderer::engine::*;
 use wgpu_renderer::pipeline::PipelineObject;
-use wgpu_renderer::renderer::RenderState;
 use wgpu_renderer::scene::*;
 use winit::event::WindowEvent;
 
@@ -51,15 +50,14 @@ const VERTICES: &[Vertex] = &[
 
 const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
 
-pub fn input(
-    state: &mut RenderState,
-    size: &mut winit::dpi::PhysicalSize<u32>,
-    event: &WindowEvent,
-) -> bool {
+pub fn input(engine: &mut Engine, event: &WindowEvent) -> bool {
+    let renderer = &mut engine.renderer;
+    let size = &mut engine.size;
+
     const FACTOR: f64 = 0.3;
     match event {
         WindowEvent::CursorMoved { position, .. } => {
-            state.clear_color = wgpu::Color {
+            renderer.state.clear_color = wgpu::Color {
                 r: position.x as f64 / size.width as f64 + FACTOR,
                 g: position.y as f64 / size.height as f64 + FACTOR,
                 b: 1.0,
@@ -244,12 +242,19 @@ pub fn render(engine: &Engine) -> Result<(), wgpu::SurfaceError> {
 
 fn main() {
     let scene = Scene {
+        camera: Default::default(),
+        camera_controller: Default::default(),
+        camera_uniform: Default::default(),
         objects: vec![],
         pipeline_objects: vec![],
+    };
+
+    let commands = CommandBundle {
         input_command: Box::new(input),
         init_command: Box::new(init),
         render_command: Box::new(render),
+        update_command: Box::new(|_| {}),
     };
 
-    pollster::block_on(run(Some(scene)));
+    pollster::block_on(run(Some(scene), commands));
 }

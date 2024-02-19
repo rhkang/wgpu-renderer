@@ -1,18 +1,76 @@
+use crate::renderer::*;
+use crate::scene::*;
+
 use std::sync::Arc;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowBuilder};
 
-use crate::renderer::*;
-use crate::scene::*;
+pub struct CommandBundle {
+    pub input_command: Box<dyn Fn(&mut Engine, &WindowEvent) -> bool>,
+    pub init_command: Box<dyn Fn(&mut Engine)>,
+    pub render_command: Box<dyn Fn(&Engine) -> Result<(), wgpu::SurfaceError>>,
+    pub update_command: Box<dyn Fn(&mut Engine)>,
+}
 
-impl Default for RenderState {
+impl CommandBundle {
+    pub fn set_bundle(&mut self, commands: CommandBundle) {
+        self.set_input_command(commands.input_command);
+        self.set_init_command(commands.init_command);
+        self.set_render_command(commands.render_command);
+        self.set_update_command(commands.update_command);
+    }
+
+    pub fn set_input_command(&mut self, command: Box<dyn Fn(&mut Engine, &WindowEvent) -> bool>) {
+        self.input_command = command;
+    }
+
+    pub fn set_init_command(&mut self, command: Box<dyn Fn(&mut Engine)>) {
+        self.init_command = command;
+    }
+
+    pub fn set_render_command(
+        &mut self,
+        command: Box<dyn Fn(&Engine) -> Result<(), wgpu::SurfaceError>>,
+    ) {
+        self.render_command = command;
+    }
+
+    pub fn set_update_command(&mut self, command: Box<dyn Fn(&mut Engine)>) {
+        self.update_command = command;
+    }
+}
+
+impl Default for CommandBundle {
     fn default() -> Self {
         Self {
-            polygon_fill: true,
-            clear_color: wgpu::Color::BLACK,
+            input_command: Box::new(|_, _| false),
+            init_command: Box::new(|_| {}),
+            render_command: Box::new(|_| Ok(())),
+            update_command: Box::new(|_| {}),
         }
+    }
+}
+
+pub struct Game {
+    pub engine: Engine,
+
+    // commands
+    pub commands: CommandBundle,
+}
+
+impl Game {
+    fn input(&mut self, event: &WindowEvent) -> bool {
+        (&self.commands.input_command)(&mut self.engine, event)
+    }
+
+    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        (&self.commands.render_command)(&mut self.engine)
+    }
+
+    pub fn update(&mut self) {
+        (&self.commands.update_command)(&mut self.engine)
     }
 }
 
@@ -30,6 +88,7 @@ pub struct Engine {
     // managing objects
     pub renderer: Renderer,
     pub scene: Scene,
+    pub start_time: std::time::SystemTime,
 }
 
 impl Engine {
@@ -46,10 +105,6 @@ impl Engine {
         }
     }
 
-    fn input(&mut self, event: &WindowEvent) -> bool {
-        (&self.scene.input_command)(&mut self.renderer.state, &mut self.size, event)
-    }
-
     pub async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
 
@@ -59,7 +114,6 @@ impl Engine {
         });
 
         let surface = instance.create_surface(window.clone()).unwrap();
-
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
@@ -103,38 +157,35 @@ impl Engine {
         surface.configure(&device, &config);
 
         Self {
-            surface,
             device,
-            window,
-            config,
             queue,
+            window,
+            surface,
+            config,
             size,
             renderer: Default::default(),
             scene: Default::default(),
+            start_time: std::time::SystemTime::now(),
         }
     }
-
-    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        (self.scene.render_command)(self)
-    }
-
-    pub fn update(&self) {}
 }
 
-pub async fn run(scene: Option<Scene>) {
+pub async fn run(scene: Option<Scene>, commands: CommandBundle) {
     env_logger::init();
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(WindowBuilder::new().build(&event_loop).unwrap());
 
-    let mut engine = Engine::new(window).await;
-    match &scene {
-        Some(s) => {
-            let f = &s.init_command;
-            (f)(&mut engine);
+    let engine = Engine::new(window).await;
+    let mut game = Game { engine, commands };
 
-            let scene_data = scene.unwrap();
-            engine.scene.render_command = scene_data.render_command;
-            engine.scene.input_command = scene_data.input_command;
+    game.engine
+        .scene
+        .camera
+        .set_aspect(game.engine.size.width as f32 / game.engine.size.height as f32);
+
+    match &scene {
+        Some(_) => {
+            (&game.commands.init_command)(&mut game.engine);
         }
         None => {
             eprintln!("No Entry Scene provided");
@@ -144,8 +195,8 @@ pub async fn run(scene: Option<Scene>) {
 
     // move pipelines provided by scene into renderer
     loop {
-        match engine.scene.pipeline_objects.pop() {
-            Some(item) => engine.renderer.pipeline_manager.add(item),
+        match game.engine.scene.pipeline_objects.pop() {
+            Some(item) => game.engine.renderer.pipeline_manager.add(item),
             None => break,
         }
     }
@@ -154,8 +205,8 @@ pub async fn run(scene: Option<Scene>) {
         Event::WindowEvent {
             window_id,
             ref event,
-        } if window_id == engine.window().id() => {
-            if !engine.input(event) {
+        } if window_id == game.engine.window().id() => {
+            if !game.input(event) {
                 match event {
                     WindowEvent::CloseRequested
                     | WindowEvent::KeyboardInput {
@@ -178,14 +229,21 @@ pub async fn run(scene: Option<Scene>) {
                             },
                         ..
                     } => {
-                        engine.renderer.state.polygon_fill = !engine.renderer.state.polygon_fill;
+                        game.engine.renderer.state.polygon_fill =
+                            !game.engine.renderer.state.polygon_fill;
                     }
-                    WindowEvent::Resized(new_size) => engine.resize(*new_size),
+                    WindowEvent::Resized(new_size) => {
+                        game.engine.resize(*new_size);
+                        game.engine
+                            .scene
+                            .camera
+                            .set_aspect(new_size.width as f32 / new_size.height as f32);
+                    }
                     WindowEvent::RedrawRequested => {
-                        engine.update();
-                        match engine.render() {
+                        game.update();
+                        match game.render() {
                             Ok(_) => {}
-                            Err(wgpu::SurfaceError::Lost) => engine.resize(engine.size),
+                            Err(wgpu::SurfaceError::Lost) => game.engine.resize(game.engine.size),
                             Err(e) => eprintln!("{:?}", e),
                         }
                     }
@@ -194,7 +252,7 @@ pub async fn run(scene: Option<Scene>) {
             }
         }
         Event::AboutToWait => {
-            engine.window().request_redraw();
+            game.engine.window().request_redraw();
         }
         _ => (),
     });

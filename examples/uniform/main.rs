@@ -1,23 +1,24 @@
+use bytemuck::{Pod, Zeroable};
+use cgmath::SquareMatrix;
+use std::default::Default;
 use wgpu::util::DeviceExt;
+use wgpu_renderer::camera::CameraUniform;
 use wgpu_renderer::engine::*;
 use wgpu_renderer::pipeline::PipelineObject;
 use wgpu_renderer::scene::*;
 use wgpu_renderer::texture;
-use winit::dpi::PhysicalSize;
+use winit::event::WindowEvent;
 
-use bytemuck::{Pod, Zeroable};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct Uniform {
-    width: f32,
-    height: f32,
+struct RotationUniform {
+    rotation: [[f32; 4]; 4],
 }
 
-impl Uniform {
-    fn new(size: &PhysicalSize<u32>) -> Self {
+impl RotationUniform {
+    fn new() -> Self {
         Self {
-            width: size.width as f32,
-            height: size.height as f32,
+            rotation: cgmath::Matrix4::identity().into(),
         }
     }
 }
@@ -62,6 +63,10 @@ const VERTICES: &[Vertex] = &[
 ];
 
 const INDICES: &[u16] = &[0, 2, 3, 0, 3, 1];
+
+pub fn input(engine: &mut Engine, event: &WindowEvent) -> bool {
+    (&mut engine.scene.camera_controller).process_window_events(event)
+}
 
 pub fn init(engine: &mut Engine) {
     let scene = &mut engine.scene;
@@ -109,13 +114,13 @@ pub fn init(engine: &mut Engine) {
         ],
     });
 
-    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let camera = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: None,
-        contents: bytemuck::cast_slice(&[Uniform::new(&engine.size)]),
-        usage: wgpu::BufferUsages::UNIFORM,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        contents: bytemuck::cast_slice(&[CameraUniform::new()]),
     });
 
-    let uniform_bind_group_layout =
+    let camera_bind_group_layout =
         device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -130,12 +135,44 @@ pub fn init(engine: &mut Engine) {
             }],
         });
 
-    let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
-        layout: &uniform_bind_group_layout,
+        layout: &camera_bind_group_layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
-            resource: wgpu::BindingResource::Buffer(uniform.as_entire_buffer_binding()),
+            resource: wgpu::BindingResource::Buffer(camera.as_entire_buffer_binding()),
+        }],
+    });
+
+    let rotation_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::cast_slice(&[RotationUniform::new()]),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let rotation_uniform_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+    let rotation_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &rotation_uniform_bind_group_layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(
+                rotation_uniform_buffer.as_entire_buffer_binding(),
+            ),
         }],
     });
 
@@ -146,16 +183,31 @@ pub fn init(engine: &mut Engine) {
     engine
         .renderer
         .bind_group_manager
-        .add_bind_group(1, uniform_bind_group);
+        .add_bind_group(1, camera_bind_group);
+    engine
+        .renderer
+        .bind_group_manager
+        .add_bind_group(2, rotation_uniform_bind_group);
+
+    engine.renderer.buffer_manager.add_buffer(0, camera);
+
+    engine
+        .renderer
+        .buffer_manager
+        .add_buffer(1, rotation_uniform_buffer);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("texture.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("uniform.wgsl").into()),
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Pipeline Layout"),
-        bind_group_layouts: &[&bind_group_layout, &uniform_bind_group_layout],
+        bind_group_layouts: &[
+            &bind_group_layout,
+            &camera_bind_group_layout,
+            &rotation_uniform_bind_group_layout,
+        ],
         push_constant_ranges: &[],
     });
 
@@ -303,21 +355,36 @@ pub fn render(engine: &Engine) -> Result<(), wgpu::SurfaceError> {
             None => {}
         }
 
-        let bind_group = &engine
-            .renderer
-            .bind_group_manager
-            .find_by_id(0)
-            .unwrap()
-            .bind_group;
-        _render_pass.set_bind_group(0, bind_group, &[]);
-
-        let uniform_bind_group = &engine
-            .renderer
-            .bind_group_manager
-            .find_by_id(1)
-            .unwrap()
-            .bind_group;
-        _render_pass.set_bind_group(1, uniform_bind_group, &[]);
+        _render_pass.set_bind_group(
+            0,
+            &engine
+                .renderer
+                .bind_group_manager
+                .find_by_id(0)
+                .unwrap()
+                .bind_group,
+            &[],
+        );
+        _render_pass.set_bind_group(
+            1,
+            &engine
+                .renderer
+                .bind_group_manager
+                .find_by_id(1)
+                .unwrap()
+                .bind_group,
+            &[],
+        );
+        _render_pass.set_bind_group(
+            2,
+            &engine
+                .renderer
+                .bind_group_manager
+                .find_by_id(2)
+                .unwrap()
+                .bind_group,
+            &[],
+        );
 
         _render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
     }
@@ -326,6 +393,32 @@ pub fn render(engine: &Engine) -> Result<(), wgpu::SurfaceError> {
     output.present();
 
     Ok(())
+}
+
+fn update(engine: &mut Engine) {
+    let renderer = &mut engine.renderer;
+    let scene = &mut engine.scene;
+    let queue = &engine.queue;
+
+    scene.camera_controller.update_camera(&mut scene.camera);
+    scene
+        .camera_uniform
+        .update_transformation(&mut scene.camera);
+
+    queue.write_buffer(
+        &renderer.buffer_manager.find_by_id(0).unwrap().buffer,
+        0,
+        bytemuck::cast_slice(&[scene.camera_uniform]),
+    );
+
+    let elapsed = engine.start_time.elapsed().unwrap().as_secs_f32();
+    queue.write_buffer(
+        &renderer.buffer_manager.find_by_id(1).unwrap().buffer,
+        0,
+        bytemuck::cast_slice(&[RotationUniform {
+            rotation: cgmath::Matrix4::from_angle_z(cgmath::Rad(elapsed)).into(),
+        }]),
+    );
 }
 
 fn main() {
@@ -338,10 +431,10 @@ fn main() {
     };
 
     let commands = CommandBundle {
-        input_command: Box::new(|_, _| false),
+        input_command: Box::new(input),
         init_command: Box::new(init),
         render_command: Box::new(render),
-        update_command: Box::new(|_| {}),
+        update_command: Box::new(update),
     };
 
     pollster::block_on(run(Some(scene), commands));

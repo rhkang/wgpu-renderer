@@ -1,5 +1,7 @@
 use bytemuck::{Pod, Zeroable};
 
+pub struct Object {}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
