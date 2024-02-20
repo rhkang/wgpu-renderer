@@ -45,6 +45,10 @@ impl Camera {
     pub fn set_aspect(&mut self, aspect: f32) {
         self.aspect = aspect;
     }
+
+    pub fn set_initial_eye_pos(&mut self, pos: cgmath::Point3<f32>) {
+        self.eye = pos;
+    }
 }
 
 pub struct CameraController {
@@ -123,7 +127,7 @@ impl CameraController {
     }
 
     pub fn update_camera(&self, camera: &mut Camera) {
-        pub const MAX_RANGE: f32 = 1000.0;
+        pub const MAX_RANGE: f32 = 100000000.0;
 
         let forward = camera.target - camera.eye;
         let forward_norm = forward.normalize();

@@ -1,3 +1,5 @@
+use crate::texture;
+
 pub struct PipelineObject {
     pub pipeline: wgpu::RenderPipeline,
     pub polygon_mode: wgpu::PolygonMode,
@@ -45,4 +47,14 @@ impl PipelineManager {
 
         &self.pipelines[0].pipeline
     }
+}
+
+pub fn create_depth_stencil_state() -> Option<wgpu::DepthStencilState> {
+    Some(wgpu::DepthStencilState{
+        format: texture::Texture::DEPTH_FORMAT,
+        depth_write_enabled: true,
+        depth_compare: wgpu::CompareFunction::Less,
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    })
 }

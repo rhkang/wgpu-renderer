@@ -7,6 +7,7 @@ pub struct Renderer {
     pub vertex_buffer: Option<wgpu::Buffer>,
     pub index_buffer: Option<wgpu::Buffer>,
     pub texture: Option<Texture>,
+    pub depth_texture: Option<Texture>,
     pub bind_group_manager: BindGroupManager,
     pub buffer_manager: BufferManager,
 }
@@ -19,6 +20,7 @@ impl Default for Renderer {
             vertex_buffer: None,
             index_buffer: None,
             texture: None,
+            depth_texture: None,
             bind_group_manager: Default::default(),
             buffer_manager: Default::default(),
         }
