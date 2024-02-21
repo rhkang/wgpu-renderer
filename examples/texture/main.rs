@@ -335,6 +335,7 @@ fn main() {
         camera_uniform: Default::default(),
         objects: vec![],
         pipeline_objects: vec![],
+        projection: Default::default(),
     };
 
     let commands = CommandBundle {

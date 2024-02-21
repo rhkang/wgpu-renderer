@@ -16,3 +16,4 @@ image = {version = "0.24.8", features = ["png", "jpeg"], default-features = fals
 anyhow = "1.0"
 cgmath = "0.18.0"
 russimp = { version = "1.0.5", features = ["prebuilt"] }
+instant = "0.1.12"

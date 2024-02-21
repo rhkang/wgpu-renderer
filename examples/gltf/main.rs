@@ -1,13 +1,13 @@
+use std::vec;
+
 use bytemuck::{Pod, Zeroable};
 use cgmath::SquareMatrix;
-use std::default::Default;
 use wgpu::util::DeviceExt;
-use wgpu_renderer::camera::CameraUniform;
+use wgpu_renderer::camera::{self, CameraUniform};
 use wgpu_renderer::engine::*;
 use wgpu_renderer::pipeline::PipelineObject;
 use wgpu_renderer::scene::*;
 use wgpu_renderer::{object, pipeline, texture};
-use winit::event::WindowEvent;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -23,17 +23,16 @@ impl RotationUniform {
     }
 }
 
-pub fn input(engine: &mut Engine, event: &WindowEvent) -> bool {
-    (&mut engine.scene.camera_controller).process_window_events(event)
-}
-
 pub fn init(engine: &mut Engine) {
     let scene = &mut engine.scene;
     let device = &engine.device;
     let config = &engine.config;
     let queue = &engine.queue;
 
-    let fox_object = object::get_object_from_mesh(object::get_mesh_from_model(device, "resources/fox/Fox.gltf", 0.02), [0.0; 3]);
+    let fox_object = object::get_object_from_mesh(
+        object::get_mesh_from_model(device, "resources/fox/Fox.gltf", 0.02),
+        [0.0; 3],
+    );
     scene.objects.push(fox_object);
 
     let diffuse_bytes = include_bytes!("../../resources/fox/Texture.png");
@@ -290,14 +289,14 @@ pub fn render(engine: &Engine) -> Result<(), wgpu::SurfaceError> {
 
     let depth_stencil_attachment = match &engine.renderer.depth_texture {
         None => None,
-        Some(texture) => Some(wgpu::RenderPassDepthStencilAttachment{
+        Some(texture) => Some(wgpu::RenderPassDepthStencilAttachment {
             view: &texture.view,
             depth_ops: Some(wgpu::Operations {
                 load: wgpu::LoadOp::Clear(1.0),
                 store: wgpu::StoreOp::Store,
             }),
             stencil_ops: None,
-        })
+        }),
     };
 
     let fox_object = engine.scene.objects.first().unwrap();
@@ -325,7 +324,10 @@ pub fn render(engine: &Engine) -> Result<(), wgpu::SurfaceError> {
         }
 
         _render_pass.set_vertex_buffer(0, fox_object.mesh.vertex_buffer.slice(..));
-        _render_pass.set_index_buffer(fox_object.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        _render_pass.set_index_buffer(
+            fox_object.mesh.index_buffer.slice(..),
+            wgpu::IndexFormat::Uint16,
+        );
 
         _render_pass.set_bind_group(
             0,
@@ -372,10 +374,13 @@ fn update(engine: &mut Engine) {
     let scene = &mut engine.scene;
     let queue = &engine.queue;
 
-    scene.camera_controller.update_camera(&mut scene.camera);
+    let dt = engine.last_render_time.elapsed();
+    engine.last_render_time = instant::Instant::now();
+
+    scene.camera_controller.update_camera(&mut scene.camera, dt);
     scene
         .camera_uniform
-        .update_transformation(&mut scene.camera);
+        .update_view_proj(&scene.camera, &scene.projection);
 
     queue.write_buffer(
         &renderer.buffer_manager.find_by_id(0).unwrap().buffer,
@@ -383,7 +388,7 @@ fn update(engine: &mut Engine) {
         bytemuck::cast_slice(&[scene.camera_uniform]),
     );
 
-    let elapsed = engine.start_time.elapsed().unwrap().as_secs_f32();
+    let elapsed = engine.start_time.elapsed().as_secs_f32();
     queue.write_buffer(
         &renderer.buffer_manager.find_by_id(1).unwrap().buffer,
         0,
@@ -395,15 +400,20 @@ fn update(engine: &mut Engine) {
 
 fn main() {
     let scene = Scene {
-        camera: Default::default(),
+        camera: camera::Camera::new(
+            [0.0, 2.0, -5.0],
+            cgmath::Rad(camera::SAFE_FRAC_PI_2),
+            cgmath::Rad(-0.2),
+        ),
         camera_controller: Default::default(),
         camera_uniform: Default::default(),
+        projection: Default::default(),
         objects: vec![],
         pipeline_objects: vec![],
     };
 
     let commands = CommandBundle {
-        input_command: Box::new(input),
+        input_command: Box::new(camera::input),
         init_command: Box::new(init),
         render_command: Box::new(render),
         update_command: Box::new(update),
