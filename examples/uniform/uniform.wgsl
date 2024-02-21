@@ -5,7 +5,7 @@ var v_texture: texture_2d<f32>;
 var s_texture: sampler;
 
 struct CameraUniform {
-    transformation: mat4x4<f32>,
+    view_proj: mat4x4<f32>,
 }
 
 @group(1) @binding(0)
@@ -38,7 +38,7 @@ fn vs_main(model: VertexInput
 
     pos = rotate.transformation * pos;
 
-    out.clip_position = camera.transformation * pos;
+    out.clip_position = camera.view_proj * pos;
     return out;
 }
 
